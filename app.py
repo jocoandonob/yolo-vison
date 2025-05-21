@@ -50,12 +50,8 @@ def process_image(image, model_version, model_name, task_type, confidence_thresh
                 
         elif task_type in ["Semantic Segmentation", "Instance Segmentation"]:
             if model_version == "YOLOv5":
-                results = model(img_array)
-                # Get segmentation masks
-                masks = results.pred[0].masks
-                if masks is not None:
-                    masks = masks.cpu().numpy()
-                    return masks
+                # YOLOv5 doesn't support segmentation directly
+                st.warning("YOLOv5 doesn't support segmentation tasks. Please use YOLOv8 or YOLOv9 for segmentation.")
                 return None
             else:  # YOLOv8 and YOLOv9
                 results = model(img_array, conf=confidence_threshold)[0]
@@ -114,31 +110,6 @@ st.set_page_config(
     page_icon="🔍",
     layout="wide"
 )
-
-# App title and description
-st.title("Object Detection and Segmentation App")
-st.markdown("""
-This app performs object detection and segmentation using various YOLO models.
-Upload an image, select a model and task type, and see the results!
-""")
-
-# Add installation instructions
-with st.expander("📋 Installation Instructions"):
-    st.markdown("""
-    ### How to install YOLO packages
-    
-    To fully use this application, you'll need to install either `yolov5` or `ultralytics` packages:
-    
-    ```bash
-    # For YOLOv5 models
-    pip install yolov5
-    
-    # For YOLOv8, YOLOv9 models
-    pip install ultralytics
-    ```
-    
-    The app will automatically detect when these packages are available.
-    """)
 
 # Check for required packages
 torch_available = importlib.util.find_spec("torch") is not None
@@ -242,9 +213,15 @@ with st.sidebar:
                    f"Models will not work until it's installed.")
     
     # Task type selection
+    available_tasks = ["Object Detection"]
+    if model_version in ["YOLOv8", "YOLOv9"]:
+        available_tasks.extend(["Semantic Segmentation", "Instance Segmentation"])
+    if model_version == "YOLOv8":
+        available_tasks.append("Panoptic Segmentation")
+        
     task_type = st.selectbox(
         "Select Task",
-        ["Object Detection", "Semantic Segmentation", "Instance Segmentation", "Panoptic Segmentation"],
+        available_tasks,
         help="Select the type of task to perform"
     )
     
