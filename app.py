@@ -190,6 +190,9 @@ def display_results(image, results, task_type):
                 [255, 0, 128, 200],  # Pink
             ]
             
+            # Create a copy of the overlay for drawing
+            draw_overlay = overlay[..., :3].copy()
+            
             for i, (mask, box, score, class_id) in enumerate(zip(masks, boxes, scores, class_ids)):
                 # Use vibrant colors in sequence
                 color = np.array(vibrant_colors[i % len(vibrant_colors)])
@@ -199,13 +202,15 @@ def display_results(image, results, task_type):
                 
                 # Draw bounding box with thicker lines
                 x1, y1, x2, y2 = map(int, box)
-                cv2.rectangle(overlay[..., :3], (x1, y1), (x2, y2), color[:3].tolist(), 3)
+                cv2.rectangle(draw_overlay, (x1, y1), (x2, y2), color[:3].tolist(), 3)
                 # Add label with larger font and thicker text
                 label = f"{class_id}: {score:.2f}"
-                cv2.putText(overlay[..., :3], label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color[:3].tolist(), 2)
+                cv2.putText(draw_overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color[:3].tolist(), 2)
             
-            # Convert back to RGB for display
-            result_image = overlay[..., :3]
+            # Blend the mask overlay with the drawing overlay
+            mask_overlay = overlay[..., :3]
+            alpha = 0.7
+            result_image = cv2.addWeighted(mask_overlay, alpha, draw_overlay, 1 - alpha, 0)
             image = Image.fromarray(result_image)
     
     # Display the processed image
