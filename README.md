@@ -1,5 +1,7 @@
 # YoloVisionAI
 
+![YoloVisionAI Thumbnail](thumbnail.png)
+
 A computer vision project built with PyTorch and Streamlit for real-time object detection and analysis.
 
 ## Features
