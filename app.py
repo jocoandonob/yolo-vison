@@ -56,72 +56,54 @@ def process_image(image, model_version, model_name, task_type, confidence_thresh
             else:  # YOLOv8 and YOLOv9
                 results = model(img_array, conf=confidence_threshold)[0]
                 if hasattr(results, 'masks') and results.masks is not None:
-                    # For semantic segmentation, we get a single mask with class indices
-                    masks = results.masks.data.cpu().numpy()
+                    # Get segmentation masks
+                    masks = results.masks.data.cpu().numpy()  # shape: (N, H, W)
+                    boxes = results.boxes.xyxy.cpu().numpy()
+                    scores = results.boxes.conf.cpu().numpy()
+                    class_ids = results.boxes.cls.cpu().numpy().astype(int)
                     
-                    # Get unique class IDs from the mask
-                    class_ids = np.unique(masks)
-                    class_ids = class_ids[class_ids > 0]  # Remove background class (0)
+                    # Process each mask
+                    processed_masks = []
+                    for mask in masks:
+                        # Ensure mask is 2D
+                        if len(mask.shape) > 2:
+                            mask = np.squeeze(mask)
+                        
+                        # Resize mask if needed
+                        if mask.shape[:2] != img_array.shape[:2]:
+                            mask = cv2.resize(mask, (img_array.shape[1], img_array.shape[0]), 
+                                            interpolation=cv2.INTER_NEAREST)
+                        
+                        processed_masks.append(mask)
                     
-                    # Create binary masks for each class
-                    binary_masks = []
-                    for class_id in class_ids:
-                        # Create a binary mask for this class
-                        binary_mask = np.zeros(img_array.shape[:2], dtype=np.uint8)
-                        # Resize the mask to match image dimensions if needed
-                        if masks.shape[:2] != img_array.shape[:2]:
-                            # Ensure we have valid dimensions
-                            if masks.shape[0] > 0 and masks.shape[1] > 0:
-                                try:
-                                    resized_mask = cv2.resize(masks, (img_array.shape[1], img_array.shape[0]), 
-                                                            interpolation=cv2.INTER_NEAREST)
-                                    binary_mask[resized_mask == class_id] = 1
-                                except cv2.error:
-                                    # If resize fails, use the original mask
-                                    binary_mask[masks == class_id] = 1
-                        else:
-                            binary_mask[masks == class_id] = 1
-                        binary_masks.append(binary_mask)
-                    
-                    # Create dummy boxes and scores for visualization
-                    boxes = np.zeros((len(class_ids), 4))
-                    scores = np.ones(len(class_ids))  # Use 1.0 as default confidence
-                    
-                    return np.array(binary_masks), boxes, scores, class_ids
+                    return np.array(processed_masks), boxes, scores, class_ids
                 return None
                 
         elif task_type in ["Instance Segmentation", "Panoptic Segmentation"]:
             if model_version == "YOLOv8":
                 results = model(img_array, conf=confidence_threshold)[0]
                 if hasattr(results, 'masks') and results.masks is not None:
-                    masks = results.masks.data.cpu().numpy()
+                    # Get segmentation masks
+                    masks = results.masks.data.cpu().numpy()  # shape: (N, H, W)
                     boxes = results.boxes.xyxy.cpu().numpy()
                     scores = results.boxes.conf.cpu().numpy()
                     class_ids = results.boxes.cls.cpu().numpy().astype(int)
                     
-                    # Resize masks to match image dimensions
-                    resized_masks = []
+                    # Process each mask
+                    processed_masks = []
                     for mask in masks:
                         # Ensure mask is 2D
                         if len(mask.shape) > 2:
                             mask = np.squeeze(mask)
-                            
+                        
+                        # Resize mask if needed
                         if mask.shape[:2] != img_array.shape[:2]:
-                            # Ensure we have valid dimensions
-                            if mask.shape[0] > 0 and mask.shape[1] > 0:
-                                try:
-                                    resized_mask = cv2.resize(mask, (img_array.shape[1], img_array.shape[0]), 
-                                                            interpolation=cv2.INTER_NEAREST)
-                                    resized_masks.append(resized_mask)
-                                except cv2.error:
-                                    # If resize fails, use the original mask
-                                    resized_masks.append(mask)
-                            else:
-                                resized_masks.append(mask)
-                        else:
-                            resized_masks.append(mask)
+                            mask = cv2.resize(mask, (img_array.shape[1], img_array.shape[0]), 
+                                            interpolation=cv2.INTER_NEAREST)
+                        
+                        processed_masks.append(mask)
                     
-                    return np.array(resized_masks), boxes, scores, class_ids
+                    return np.array(processed_masks), boxes, scores, class_ids
             return None
             
     except Exception as e:
@@ -149,37 +131,25 @@ def display_results(image, results, task_type):
     elif task_type in ["Semantic Segmentation", "Instance Segmentation", "Panoptic Segmentation"]:
         masks, boxes, scores, class_ids = results
         if masks is not None:
-            # Convert image to numpy array and ensure it's RGB
+            # Convert image to numpy array
             img_array = np.array(image)
-            if len(img_array.shape) == 2:  # If grayscale
-                img_array = np.stack([img_array] * 3, axis=-1)
             
-            # Create a colored overlay with the same shape as the image
-            overlay = np.zeros_like(img_array)
+            # Create a copy of the image for overlay
+            overlay = img_array.copy()
             
             for mask, box, score, class_id in zip(masks, boxes, scores, class_ids):
-                color = np.random.randint(0, 255, 3)
+                # Generate a random color with alpha channel
+                color = np.append(np.random.randint(0, 255, 3), 255)  # RGB + full alpha
                 
-                # Ensure mask is binary and matches image dimensions
-                if mask.shape[:2] != overlay.shape[:2]:
-                    try:
-                        mask = cv2.resize(mask, (overlay.shape[1], overlay.shape[0]), 
-                                        interpolation=cv2.INTER_NEAREST)
-                    except cv2.error:
-                        continue  # Skip this mask if resize fails
-                
-                # Create a 3D mask for color overlay
-                mask_3d = np.stack([mask] * 3, axis=-1)
-                
-                # Apply mask to overlay
-                overlay[mask_3d > 0] = color
+                # Apply mask directly to overlay
+                overlay[mask > 0] = color
                 
                 # Draw bounding box
                 x1, y1, x2, y2 = map(int, box)
-                cv2.rectangle(overlay, (x1, y1), (x2, y2), color.tolist(), 2)
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), color[:3].tolist(), 2)  # Use RGB for drawing
                 # Add label
                 label = f"{class_id}: {score:.2f}"
-                cv2.putText(overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color.tolist(), 2)
+                cv2.putText(overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color[:3].tolist(), 2)
             
             # Blend the overlay with the original image
             alpha = 0.5
