@@ -137,22 +137,36 @@ def display_results(image, results, task_type):
             # Create a copy of the image for overlay
             overlay = img_array.copy()
             
-            for mask, box, score, class_id in zip(masks, boxes, scores, class_ids):
-                # Generate a random color with alpha channel
-                color = np.append(np.random.randint(0, 255, 3), 255)  # RGB + full alpha
+            # Define a set of vibrant colors for better visibility
+            vibrant_colors = [
+                [255, 0, 0, 200],    # Bright Red
+                [0, 255, 0, 200],    # Bright Green
+                [0, 0, 255, 200],    # Bright Blue
+                [255, 255, 0, 200],  # Yellow
+                [255, 0, 255, 200],  # Magenta
+                [0, 255, 255, 200],  # Cyan
+                [255, 128, 0, 200],  # Orange
+                [128, 0, 255, 200],  # Purple
+                [0, 128, 255, 200],  # Light Blue
+                [255, 0, 128, 200],  # Pink
+            ]
+            
+            for i, (mask, box, score, class_id) in enumerate(zip(masks, boxes, scores, class_ids)):
+                # Use vibrant colors in sequence
+                color = np.array(vibrant_colors[i % len(vibrant_colors)])
                 
-                # Apply mask directly to overlay
+                # Apply mask directly to overlay with higher opacity
                 overlay[mask > 0] = color
                 
-                # Draw bounding box
+                # Draw bounding box with thicker lines
                 x1, y1, x2, y2 = map(int, box)
-                cv2.rectangle(overlay, (x1, y1), (x2, y2), color[:3].tolist(), 2)  # Use RGB for drawing
-                # Add label
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), color[:3].tolist(), 3)  # Increased line thickness
+                # Add label with larger font and thicker text
                 label = f"{class_id}: {score:.2f}"
-                cv2.putText(overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color[:3].tolist(), 2)
+                cv2.putText(overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color[:3].tolist(), 2)
             
-            # Blend the overlay with the original image
-            alpha = 0.5
+            # Blend the overlay with the original image with higher opacity
+            alpha = 0.7  # Increased from 0.5 to 0.7 for more visible overlay
             result_image = cv2.addWeighted(img_array, 1, overlay, alpha, 0)
             image = Image.fromarray(result_image)
     
@@ -287,7 +301,17 @@ with st.sidebar:
         st.warning(f"No models available for {model_version} and {task_type}")
         model_name = None
     else:
-        model_name = st.selectbox("Select Model", available_models)
+        # For YOLOv8 segmentation, ensure we use the correct model name
+        if model_version == "YOLOv8" and "Segmentation" in task_type:
+            # Filter to only show segmentation models
+            available_models = [m for m in available_models if "-seg" in m]
+            if not available_models:
+                st.warning("No segmentation models available. Please download a segmentation model first.")
+                model_name = None
+            else:
+                model_name = st.selectbox("Select Model", available_models)
+        else:
+            model_name = st.selectbox("Select Model", available_models)
         
         # Load the selected model
         if model_name:
