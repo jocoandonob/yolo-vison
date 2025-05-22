@@ -56,15 +56,15 @@ def process_image(image, model_version, model_name, task_type, confidence_thresh
             else:  # YOLOv8 and YOLOv9
                 results = model(img_array, conf=confidence_threshold)[0]
                 if hasattr(results, 'masks') and results.masks is not None:
-                    # Get segmentation masks
+                    # For semantic segmentation, we combine all masks of the same class
                     masks = results.masks.data.cpu().numpy()  # shape: (N, H, W)
-                    boxes = results.boxes.xyxy.cpu().numpy()
-                    scores = results.boxes.conf.cpu().numpy()
                     class_ids = results.boxes.cls.cpu().numpy().astype(int)
                     
-                    # Process each mask
-                    processed_masks = []
-                    for mask in masks:
+                    # Create a semantic segmentation map
+                    semantic_map = np.zeros(img_array.shape[:2], dtype=np.uint8)
+                    
+                    # Process each mask and combine masks of the same class
+                    for mask, class_id in zip(masks, class_ids):
                         # Ensure mask is 2D
                         if len(mask.shape) > 2:
                             mask = np.squeeze(mask)
@@ -74,12 +74,13 @@ def process_image(image, model_version, model_name, task_type, confidence_thresh
                             mask = cv2.resize(mask, (img_array.shape[1], img_array.shape[0]), 
                                             interpolation=cv2.INTER_NEAREST)
                         
-                        processed_masks.append(mask)
+                        # Add this mask to the semantic map (class_id + 1 to avoid 0)
+                        semantic_map[mask > 0] = class_id + 1
                     
-                    return np.array(processed_masks), boxes, scores, class_ids
+                    return semantic_map, None, None, None
                 return None
                 
-        elif task_type in ["Instance Segmentation", "Panoptic Segmentation"]:
+        elif task_type == "Instance Segmentation":
             if model_version == "YOLOv8":
                 results = model(img_array, conf=confidence_threshold)[0]
                 if hasattr(results, 'masks') and results.masks is not None:
@@ -128,14 +129,52 @@ def display_results(image, results, task_type):
             label = f"{class_id}: {score:.2f}"
             draw.text((x1, y1-10), label, fill="red")
             
-    elif task_type in ["Semantic Segmentation", "Instance Segmentation", "Panoptic Segmentation"]:
+    elif task_type == "Semantic Segmentation":
+        semantic_map, _, _, _ = results
+        if semantic_map is not None:
+            # Convert image to numpy array
+            img_array = np.array(image)
+            
+            # Create RGBA overlay
+            overlay = np.zeros((*img_array.shape[:2], 4), dtype=np.uint8)
+            overlay[..., :3] = img_array  # Copy RGB channels
+            overlay[..., 3] = 255         # Set alpha channel
+            
+            # Define a set of vibrant colors for different classes
+            vibrant_colors = [
+                [255, 0, 0, 200],    # Bright Red
+                [0, 255, 0, 200],    # Bright Green
+                [0, 0, 255, 200],    # Bright Blue
+                [255, 255, 0, 200],  # Yellow
+                [255, 0, 255, 200],  # Magenta
+                [0, 255, 255, 200],  # Cyan
+                [255, 128, 0, 200],  # Orange
+                [128, 0, 255, 200],  # Purple
+                [0, 128, 255, 200],  # Light Blue
+                [255, 0, 128, 200],  # Pink
+            ]
+            
+            # Create a colored overlay for each class
+            for class_id in range(1, semantic_map.max() + 1):
+                mask = semantic_map == class_id
+                if mask.any():
+                    color = np.array(vibrant_colors[(class_id - 1) % len(vibrant_colors)])
+                    overlay[mask] = color
+            
+            # Convert back to RGB for display
+            result_image = overlay[..., :3]
+            image = Image.fromarray(result_image)
+            
+    elif task_type == "Instance Segmentation":
         masks, boxes, scores, class_ids = results
         if masks is not None:
             # Convert image to numpy array
             img_array = np.array(image)
             
-            # Create a copy of the image for overlay
-            overlay = img_array.copy()
+            # Create RGBA overlay
+            overlay = np.zeros((*img_array.shape[:2], 4), dtype=np.uint8)
+            overlay[..., :3] = img_array  # Copy RGB channels
+            overlay[..., 3] = 255         # Set alpha channel
             
             # Define a set of vibrant colors for better visibility
             vibrant_colors = [
@@ -155,19 +194,18 @@ def display_results(image, results, task_type):
                 # Use vibrant colors in sequence
                 color = np.array(vibrant_colors[i % len(vibrant_colors)])
                 
-                # Apply mask directly to overlay with higher opacity
+                # Apply mask directly to overlay
                 overlay[mask > 0] = color
                 
                 # Draw bounding box with thicker lines
                 x1, y1, x2, y2 = map(int, box)
-                cv2.rectangle(overlay, (x1, y1), (x2, y2), color[:3].tolist(), 3)  # Increased line thickness
+                cv2.rectangle(overlay[..., :3], (x1, y1), (x2, y2), color[:3].tolist(), 3)
                 # Add label with larger font and thicker text
                 label = f"{class_id}: {score:.2f}"
-                cv2.putText(overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color[:3].tolist(), 2)
+                cv2.putText(overlay[..., :3], label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color[:3].tolist(), 2)
             
-            # Blend the overlay with the original image with higher opacity
-            alpha = 0.7  # Increased from 0.5 to 0.7 for more visible overlay
-            result_image = cv2.addWeighted(img_array, 1, overlay, alpha, 0)
+            # Convert back to RGB for display
+            result_image = overlay[..., :3]
             image = Image.fromarray(result_image)
     
     # Display the processed image
@@ -285,8 +323,6 @@ with st.sidebar:
     available_tasks = ["Object Detection"]
     if model_version in ["YOLOv8", "YOLOv9"]:
         available_tasks.extend(["Semantic Segmentation", "Instance Segmentation"])
-    if model_version == "YOLOv8":
-        available_tasks.append("Panoptic Segmentation")
         
     task_type = st.selectbox(
         "Select Task",
@@ -391,91 +427,93 @@ with st.sidebar:
     confidence = st.slider("Confidence Threshold", 0.1, 1.0, 0.5, 0.05)
 
 # Main area for image upload and result display
-col1, col2 = st.columns(2)
+row1 = st.container()
 
-with col1:
-    st.header("Input Image")
+with row1:
+    col1, col2 = st.columns(2)
     
-    # Image upload
-    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-    
-    if uploaded_file is not None:
-        # Display the uploaded image
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image", use_container_width=True)
-
-with col2:
-    st.header("Detection Results")
-    
-    if uploaded_file is not None and model_name:
-        # Check if required packages are available
-        can_process = torch_available and (yolov5_available or ultralytics_available)
+    with col1:
+        st.header("Input Image")
+        # Image upload
+        uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
         
-        if not can_process:
-            if not torch_available:
-                st.error("PyTorch (torch) is required for processing images. Please install it first.")
-            else:
-                st.error("Required YOLO packages are not installed. Please install them first.")
+        if uploaded_file is not None:
+            # Display the uploaded image
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Uploaded Image", use_container_width=True)
+    
+    with col2:
+        st.header("Detection Results")
         
-        # Process button
-        elif st.button("Process Image"):
-            # Check if the selected package is available
-            model_package_available = (model_version == "YOLOv5" and yolov5_available) or \
-                                     (model_version in ["YOLOv8", "YOLOv9"] and ultralytics_available)
+        if uploaded_file is not None and model_name:
+            # Check if required packages are available
+            can_process = torch_available and (yolov5_available or ultralytics_available)
             
-            if not model_package_available:
-                package_name = model_manager.YOLO_VERSIONS[model_version]["package"]
-                st.error(f"Cannot process image. Package '{package_name}' required for {model_version} is not installed.")
-            else:
-                try:
-                    with st.spinner("Processing..."):
-                        # Record start time
-                        start_time = time.time()
-                        
-                        # Process the image
-                        results = process_image(
-                            image=image,
-                            model_version=model_version,
-                            model_name=model_name,
-                            task_type=task_type,
-                            confidence_threshold=confidence
-                        )
-                        
-                        # Calculate processing time
-                        processing_time = time.time() - start_time
-                        
-                        # Display results
-                        display_results(image, results, task_type)
-                        
-                        # Show metrics
-                        st.subheader("Results")
-                        st.write(f"Processing Time: {processing_time:.3f} seconds")
-                        
-                        # Display detailed results in expander
-                        with st.expander("View Detection Details"):
-                            if results is not None:
-                                if task_type == "Object Detection":
-                                    boxes, scores, class_ids = results
-                                    for box, score, class_id in zip(boxes, scores, class_ids):
-                                        st.write(f"Class {class_id}: {score:.2f} confidence")
-                                else:
-                                    st.write("Segmentation masks generated")
-                            else:
-                                st.write("No objects detected with the current confidence threshold.")
+            if not can_process:
+                if not torch_available:
+                    st.error("PyTorch (torch) is required for processing images. Please install it first.")
+                else:
+                    st.error("Required YOLO packages are not installed. Please install them first.")
+            
+            # Process button
+            elif st.button("Process Image"):
+                # Check if the selected package is available
+                model_package_available = (model_version == "YOLOv5" and yolov5_available) or \
+                                         (model_version in ["YOLOv8", "YOLOv9"] and ultralytics_available)
                 
-                except Exception as e:
-                    st.error(f"Error processing image: {str(e)}")
-                    st.info("""
-                    If you're having trouble processing images:
-                    1. Make sure the model is loaded correctly
-                    2. Try using a different model size
-                    3. Adjust the confidence threshold
-                    4. Check if the image format is supported
-                    """)
-    elif uploaded_file is not None and not model_name:
-        st.warning("Please select or download a model first")
-    else:
-        st.info("Please upload an image to begin")
+                if not model_package_available:
+                    package_name = model_manager.YOLO_VERSIONS[model_version]["package"]
+                    st.error(f"Cannot process image. Package '{package_name}' required for {model_version} is not installed.")
+                else:
+                    try:
+                        with st.spinner("Processing..."):
+                            # Record start time
+                            start_time = time.time()
+                            
+                            # Process the image
+                            results = process_image(
+                                image=image,
+                                model_version=model_version,
+                                model_name=model_name,
+                                task_type=task_type,
+                                confidence_threshold=confidence
+                            )
+                            
+                            # Calculate processing time
+                            processing_time = time.time() - start_time
+                            
+                            # Display results
+                            display_results(image, results, task_type)
+                            
+                            # Show metrics
+                            st.subheader("Results")
+                            st.write(f"Processing Time: {processing_time:.3f} seconds")
+                            
+                            # Display detailed results in expander
+                            with st.expander("View Detection Details"):
+                                if results is not None:
+                                    if task_type == "Object Detection":
+                                        boxes, scores, class_ids = results
+                                        for box, score, class_id in zip(boxes, scores, class_ids):
+                                            st.write(f"Class {class_id}: {score:.2f} confidence")
+                                    else:
+                                        st.write("Segmentation masks generated")
+                                else:
+                                    st.write("No objects detected with the current confidence threshold.")
+                    
+                    except Exception as e:
+                        st.error(f"Error processing image: {str(e)}")
+                        st.info("""
+                        If you're having trouble processing images:
+                        1. Make sure the model is loaded correctly
+                        2. Try using a different model size
+                        3. Adjust the confidence threshold
+                        4. Check if the image format is supported
+                        """)
+        elif uploaded_file is not None and not model_name:
+            st.warning("Please select or download a model first")
+        else:
+            st.info("Please upload an image to begin")
 
 # Footer
 st.markdown("---")
