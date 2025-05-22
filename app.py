@@ -59,10 +59,6 @@ def process_image(image, model_version, model_name, task_type, confidence_thresh
                     # For semantic segmentation, we get a single mask with class indices
                     masks = results.masks.data.cpu().numpy()
                     
-                    # Ensure masks is 2D
-                    if len(masks.shape) > 2:
-                        masks = np.squeeze(masks)
-                    
                     # Get unique class IDs from the mask
                     class_ids = np.unique(masks)
                     class_ids = class_ids[class_ids > 0]  # Remove background class (0)
@@ -106,6 +102,10 @@ def process_image(image, model_version, model_name, task_type, confidence_thresh
                     # Resize masks to match image dimensions
                     resized_masks = []
                     for mask in masks:
+                        # Ensure mask is 2D
+                        if len(mask.shape) > 2:
+                            mask = np.squeeze(mask)
+                            
                         if mask.shape[:2] != img_array.shape[:2]:
                             # Ensure we have valid dimensions
                             if mask.shape[0] > 0 and mask.shape[1] > 0:
@@ -149,10 +149,17 @@ def display_results(image, results, task_type):
     elif task_type in ["Semantic Segmentation", "Instance Segmentation", "Panoptic Segmentation"]:
         masks, boxes, scores, class_ids = results
         if masks is not None:
-            # Create a colored overlay for the masks
-            overlay = np.zeros_like(np.array(image))
+            # Convert image to numpy array and ensure it's RGB
+            img_array = np.array(image)
+            if len(img_array.shape) == 2:  # If grayscale
+                img_array = np.stack([img_array] * 3, axis=-1)
+            
+            # Create a colored overlay with the same shape as the image
+            overlay = np.zeros_like(img_array)
+            
             for mask, box, score, class_id in zip(masks, boxes, scores, class_ids):
                 color = np.random.randint(0, 255, 3)
+                
                 # Ensure mask is binary and matches image dimensions
                 if mask.shape[:2] != overlay.shape[:2]:
                     try:
@@ -161,12 +168,11 @@ def display_results(image, results, task_type):
                     except cv2.error:
                         continue  # Skip this mask if resize fails
                 
-                # Ensure mask is 2D
-                if len(mask.shape) > 2:
-                    mask = np.squeeze(mask)
+                # Create a 3D mask for color overlay
+                mask_3d = np.stack([mask] * 3, axis=-1)
                 
                 # Apply mask to overlay
-                overlay[mask > 0] = color
+                overlay[mask_3d > 0] = color
                 
                 # Draw bounding box
                 x1, y1, x2, y2 = map(int, box)
@@ -177,7 +183,7 @@ def display_results(image, results, task_type):
             
             # Blend the overlay with the original image
             alpha = 0.5
-            result_image = cv2.addWeighted(np.array(image), 1, overlay, alpha, 0)
+            result_image = cv2.addWeighted(img_array, 1, overlay, alpha, 0)
             image = Image.fromarray(result_image)
     
     # Display the processed image
