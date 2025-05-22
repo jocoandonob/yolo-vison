@@ -514,36 +514,3 @@ with row1:
             st.warning("Please select or download a model first")
         else:
             st.info("Please upload an image to begin")
-
-# Footer
-st.markdown("---")
-st.markdown("Powered by Ultralytics YOLO | App created with Streamlit")
-
-# Process the image
-if uploaded_file is not None and model_name:
-    try:
-        with st.spinner("Processing image..."):
-            # Load and process the image
-            image = Image.open(uploaded_file)
-            
-            # Process the image
-            results = process_image(
-                image=image,
-                model_version=model_version,
-                model_name=model_name,
-                task_type=task_type,
-                confidence_threshold=confidence
-            )
-            
-            # Display results
-            display_results(image, results, task_type)
-            
-    except Exception as e:
-        st.error(f"Error processing image: {str(e)}")
-        st.info("""
-        If you're having trouble processing images:
-        1. Make sure the model is loaded correctly
-        2. Try using a different model size
-        3. Adjust the confidence threshold
-        4. Check if the image format is supported
-        """)
